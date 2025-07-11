@@ -690,7 +690,11 @@
           }, [WORKPIECE_START_X]);
 
           const getBeltSpeedPixelsPerFrame = useCallback(() => {
-            return (params.beltSpeed / 60 * 100) / params.fps;
+            // Realistischere Geschwindigkeitsberechnung für Browser
+            // m/min → cm/s → pixels/frame (mit Korrekturfaktor)
+            const cmPerSecond = (params.beltSpeed * 100) / 60; // m/min → cm/s
+            const pixelsPerSecond = cmPerSecond * 0.8; // Skalierungsfaktor für realistische Darstellung
+            return pixelsPerSecond / params.fps;
           }, [params.beltSpeed, params.fps]);
           
           const getPendlerCenterPosition = useCallback(() => {
@@ -797,15 +801,20 @@
           const updateSimulation = useCallback(() => {
             if (!isRunning) return;
             
-            const deltaTime = 1/params.fps;
+            // Realistischere Delta-Zeit Berechnung
+            const deltaTime = 1/60; // Basis-FPS für konsistente Bewegung
+            const speedMultiplier = params.fps / 60; // Geschwindigkeits-Korrekturfaktor
             
             setWorkpiecePosition(prev => ({
               ...prev,
-              x: prev.x + getBeltSpeedPixelsPerFrame()
+              x: prev.x + getBeltSpeedPixelsPerFrame() * speedMultiplier
             }));
             
             setPendlerCycleProgress(prev => {
-              const newProgress = prev + (params.pendlerCycles / 60) * deltaTime;
+              // Pendlergeschwindigkeit: Zyklen/min → realistisch skaliert
+              const cyclesPerSecond = params.pendlerCycles / 60;
+              const progressIncrement = cyclesPerSecond * deltaTime * 2; // Faktor 2 für sichtbare Bewegung
+              const newProgress = prev + progressIncrement;
               return newProgress % 1;
             });
             
@@ -821,7 +830,9 @@
 
           useEffect(() => {
             if (isRunning) {
-              animationRef.current = setInterval(updateSimulation, 1000/params.fps);
+              // Optimierte Frame-Rate für Browser (max 60 FPS für Stabilität)
+              const targetFPS = Math.min(params.fps, 60);
+              animationRef.current = setInterval(updateSimulation, 1000/targetFPS);
             } else {
               clearInterval(animationRef.current);
             }
