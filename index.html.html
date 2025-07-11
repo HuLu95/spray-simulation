@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sprühbeschichtungsanlagen Simulation</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+        }
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-size: 1.2em;
+            color: #4f46e5;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading">
+        🎨 Lade Sprühbeschichtungsanlagen Simulation...
+    </div>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // ====================== KONSTANTEN ======================
+        const SIMULATION_CONFIG = {
+          WORKPIECE_WIDTH: 305,
+          WORKPIECE_HEIGHT: 125,
+          CANVAS_WIDTH: 800,
+          CANVAS_HEIGHT: 600,
+          PENDLER_X: 300,
+          WORKPIECE_MARGIN: 100,
+          DEFAULTS: {
+            beltSpeed: 7,
+            pendlerCycles: 30,
+            hublaenge: 200,
+            sprayAngle: 60,
+            distance: 54,
+            gridSize: 2,
+            fps: 120,
+          }
+        };
+
+        // ====================== HILFSFUNKTIONEN ======================
+        const useSprayCalculations = (sprayAngle, distance, sprayWidth) => {
+          const getSprayWidth = useCallback(() => sprayWidth, [sprayWidth]);
+          
+          const handleDistanceChange = useCallback((newDistance) => {
+            const newSprayWidth = newDistance * Math.tan((sprayAngle * Math.PI) / 180);
+            return {
+              distance: newDistance,
+              sprayWidth: Math.round(newSprayWidth * 10) / 10
+            };
+          }, [sprayAngle]);
+          
+          const handleSprayWidthChange = useCallback((newSprayWidth) => {
+            const newDistance = newSprayWidth / Math.tan((sprayAngle * Math.PI) / 180);
+            return {
+              distance: Math.round(newDistance * 10) / 10,
+              sprayWidth: newSprayWidth
+            };
+          }, [sprayAngle]);
+          
+          const handleAngleChange = useCallback((newAngle) => {
+            const newSprayWidth = distance * Math.tan((newAngle * Math.PI) / 180);
+            return {
+              angle: newAngle,
+              sprayWidth: Math.round(newSprayWidth * 10) / 10
+            };
+          }, [distance]);
+          
+          return { getSprayWidth, handleDistanceChange, handleSprayWidthChange, handleAngleChange };
+        };
+
+        const getDynamicColorForHits = (hits, maxHits) => {
+          if (maxHits === 0) return 'rgb(0, 100, 255)';
+          
+          if (hits === maxHits && maxHits > 0) {
+            return 'rgb(255, 0, 0)';
+          }
+          
+          const scaleMax = Math.max(maxHits - 1, 1);
+          const ratio = hits / scaleMax;
+          
+          if (ratio <= 0.25) {
+            const t = ratio / 0.25;
+            const r = Math.round(0 + t * 64);
+            const g = Math.round(100 + t * 156);
+            const b = Math.round(255 - t * 55);
+            return `rgb(${r}, ${g}, ${b})`;
+          } else if (ratio <= 0.5) {
+            const t = (ratio - 0.25) / 0.25;
+            const r = Math.round(64 + t * 191);
+            const g = Math.round(256 - t * 1);
+            const b = Math.round(200 - t * 200);
+            return `rgb(${r}, ${g}, ${b})`;
+          } else if (ratio <= 0.75) {
+            const t = (ratio - 0.5) / 0.25;
+            const r = 255;
+            const g = Math.round(255 - t * 90);
+            const b = 0;
+            return `rgb(${r}, ${g}, ${b})`;
+          } else {
+            const t = (ratio - 0.75) / 0.25;
+            const r = 255;
+            const g = Math.round(165 - t * 65);
+            const b = 0;
+            return `rgb(${r}, ${g}, ${b})`;
+          }
+        };
+
+        // ====================== CONTROL PANELS ======================
+        const CollapsibleControlPanel = ({ params, onParamChange, isRunning, onToggleRunning, onReset }) => {
+          const [isOpen, setIsOpen] = useState(false);
+          const { handleDistanceChange, handleSprayWidthChange, handleAngleChange } = useSprayCalculations(
+            params.sprayAngle, params.distance, params.sprayWidth
+          );
+          const [showAdvanced, setShowAdvanced] = useState(false);
+
+          return (
+            <>
+              <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="fixed left-4 top-20 z-50 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg shadow-lg transition-all duration-200 flex items-center gap-2"
+              >
+                <span className="text-xl">⚙️</span>
+                <span className="font-semibold">Steuerung</span>
+                <span className={`transform transition-transform ${isOpen ? 'rotate-180' : ''}`}>▶️</span>
+              </button>
+
+              {isOpen && (
+                <>
+                  <div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setIsOpen(false)} />
+                  
+                  <div className="fixed left-4 top-4 bottom-4 w-80 bg-white rounded-lg shadow-2xl z-50 overflow-y-auto">
+                    <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 rounded-t-lg flex justify-between items-center">
+                      <h2 className="text-xl font-bold flex items-center gap-2">⚙️ Anlagensteuerung</h2>
+                      <button onClick={() => setIsOpen(false)} className="text-white hover:text-gray-200 text-xl">✕</button>
+                    </div>
+                    
+                    <div className="p-4 space-y-6">
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">🏭 Grundparameter</h3>
+                        
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Bandgeschw. (m/min)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="600"
+                                step="5"
+                                value={params.beltSpeed}
+                                onChange={(e) => onParamChange('beltSpeed', Number(e.target.value))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                            </div>
+                            
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Pendler (Zykl/min)</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="60"
+                                step="1"
+                                value={params.pendlerCycles}
+                                onChange={(e) => onParamChange('pendlerCycles', Number(e.target.value))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                            </div>
+                          </div>
+                          
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Hublänge (cm)</label>
+                            <input
+                              type="number"
+                              min="50"
+                              max="300"
+                              step="10"
+                              value={params.hublaenge}
+                              onChange={(e) => onParamChange('hublaenge', Number(e.target.value))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-orange-50 rounded-lg p-4">
+                        <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">🎯 Sprüheinstellungen</h3>
+                        
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Sprühwinkel</label>
+                            <select
+                              value={params.sprayAngle}
+                              onChange={(e) => {
+                                const result = handleAngleChange(Number(e.target.value));
+                                onParamChange('sprayAngle', result.angle);
+                                onParamChange('sprayWidth', result.sprayWidth);
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                              <option value={20}>20°</option>
+                              <option value={40}>40°</option>
+                              <option value={60}>60°</option>
+                              <option value={80}>80°</option>
+                              <option value={100}>100°</option>
+                            </select>
+                          </div>
+                          
+                          <div className="bg-white rounded-md p-3 border">
+                            <p className="text-sm font-medium text-gray-700 mb-2">Sprühgeometrie (gekoppelt)</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-xs text-gray-600 mb-1">Abstand (cm)</label>
+                                <input
+                                  type="number"
+                                  min="10"
+                                  max="200"
+                                  step="1"
+                                  value={params.distance}
+                                  onChange={(e) => {
+                                    const result = handleDistanceChange(Number(e.target.value));
+                                    onParamChange('distance', result.distance);
+                                    onParamChange('sprayWidth', result.sprayWidth);
+                                  }}
+                                  className="w-full px-2 py-2 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-600 mb-1">Strahlbreite (cm)</label>
+                                <input
+                                  type="number"
+                                  min="5"
+                                  max="350"
+                                  step="0.5"
+                                  value={params.sprayWidth}
+                                  onChange={(e) => {
+                                    const result = handleSprayWidthChange(Number(e.target.value));
+                                    onParamChange('distance', result.distance);
+                                    onParamChange('sprayWidth', result.sprayWidth);
+                                  }}
+                                  className="w-full px-2 py-2 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-purple-50 rounded-lg p-4">
+                        <button
+                          onClick={() => setShowAdvanced(!showAdvanced)}
+                          className="w-full flex items-center justify-between text-lg font-semibold text-gray-800 mb-3"
+                        >
+                          <span className="flex items-center gap-2">🔧 Erweiterte Einstellungen</span>
+                          <span className={`transform transition-transform ${showAdvanced ? 'rotate-180' : ''}`}>↓</span>
+                        </button>
+                        
+                        {showAdvanced && (
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Rastergröße (cm)</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="20"
+                                step="1"
+                                value={params.gridSize}
+                                onChange={(e) => onParamChange('gridSize', Number(e.target.value))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                              <p className="text-xs text-gray-500 mt-1">Klein: Mehr Detail, langsamer | Groß: Weniger Detail, schneller</p>
+                            </div>
+                            
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">FPS (Frames per Second)</label>
+                              <input
+                                type="number"
+                                min="30"
+                                max="240"
+                                step="30"
+                                value={params.fps}
+                                onChange={(e) => onParamChange('fps', Number(e.target.value))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                              <p className="text-xs text-gray-500 mt-1">Niedrig: Weniger CPU-Last | Hoch: Flüssigere Animation (mehr CPU-Last)</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <button
+                          onClick={onToggleRunning}
+                          className={`w-full px-4 py-3 rounded-lg font-semibold text-lg transition-all duration-200 ${
+                            isRunning 
+                              ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg hover:shadow-xl' 
+                              : 'bg-green-500 hover:bg-green-600 text-white shadow-lg hover:shadow-xl'
+                          }`}
+                        >
+                          {isRunning ? '⏹️ Stop' : '▶️ Start'}
+                        </button>
+                        
+                        <button
+                          onClick={onReset}
+                          className="w-full px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg font-medium transition-all duration-200 hover:shadow-lg"
+                        >
+                          🔄 Reset
+                        </button>
+                      </div>
+                      
+                      <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded">
+                        <h4 className="font-medium text-blue-800 mb-2">📊 Live-Analyse</h4>
+                        <div className="text-sm text-blue-700 space-y-1">
+                          <p>• Farbskala: Blau(0) → Orange → Rot(Max)</p>
+                          <p>• Raster: {params.gridSize}×{params.gridSize}cm</p>
+                          <p>• FPS: {params.fps} (Simulation)</p>
+                          <p>• Nur Maximum wird rot markiert</p>
+                          <p>• Histogramm zeigt Prozentverteilung</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
+          );
+        };
+
+        const CollapsibleNozzleControl = ({ nozzles, onNozzleChange, onResetNozzles }) => {
+          const [isOpen, setIsOpen] = useState(false);
+
+          return (
+            <>
+              <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="fixed right-4 top-20 z-50 bg-red-600 hover:bg-red-700 text-white p-3 rounded-lg shadow-lg transition-all duration-200 flex items-center gap-2"
+              >
+                <span className="text-xl">🎯</span>
+                <span className="font-semibold">Düsen</span>
+                <span className={`transform transition-transform ${isOpen ? 'rotate-180' : ''}`}>◀️</span>
+              </button>
+
+              {isOpen && (
+                <>
+                  <div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setIsOpen(false)} />
+                  
+                  <div className="fixed right-4 top-4 bottom-4 w-80 bg-white rounded-lg shadow-2xl z-50 overflow-y-auto">
+                    <div className="bg-gradient-to-r from-red-600 to-red-700 text-white p-4 rounded-t-lg flex justify-between items-center">
+                      <h2 className="text-xl font-bold flex items-center gap-2">🎯 Düsensteuerung</h2>
+                      <button onClick={() => setIsOpen(false)} className="text-white hover:text-gray-200 text-xl">✕</button>
+                    </div>
+                    
+                    <div className="p-4 space-y-4">
+                      {[1, 2, 3, 4].map(nozzleId => {
+                        const nozzle = nozzles[`nozzle${nozzleId}`];
+                        
+                        return (
+                          <div key={nozzleId} className={`rounded-lg p-4 border-2 transition-all ${
+                            nozzle.active 
+                              ? 'bg-red-50 border-red-300' 
+                              : 'bg-gray-50 border-gray-200'
+                          }`}>
+                            <div className="flex items-center justify-between mb-3">
+                              <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">🔧 Düse {nozzleId}</h3>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={nozzle.active}
+                                  onChange={(e) => onNozzleChange(nozzleId, 'active', e.target.checked)}
+                                  className="sr-only peer"
+                                />
+                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-red-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
+                              </label>
+                            </div>
+                            
+                            {nozzle.active && (
+                              <div className="space-y-3">
+                                <div className="bg-white rounded-md p-3 border">
+                                  <p className="text-sm font-medium text-gray-700 mb-2">Position relativ zur Förderbandmitte (cm)</p>
+                                  
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                      <label className="block text-xs text-gray-600 mb-1">X-Position (quer)</label>
+                                      <input
+                                        type="number"
+                                        min="-200"
+                                        max="200"
+                                        step="1"
+                                        value={nozzle.x}
+                                        onChange={(e) => onNozzleChange(nozzleId, 'x', Number(e.target.value))}
+                                        className="w-full px-2 py-2 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-xs text-gray-600 mb-1">Y-Position (längs)</label>
+                                      <input
+                                        type="number"
+                                        min="-200"
+                                        max="200"
+                                        step="1"
+                                        value={nozzle.y}
+                                        onChange={(e) => onNozzleChange(nozzleId, 'y', Number(e.target.value))}
+                                        className="w-full px-2 py-2 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                                      />
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="mt-3 bg-gray-100 rounded-md p-2">
+                                    <p className="text-xs text-gray-600 mb-1">Vorschau:</p>
+                                    <div className="relative w-full h-12 bg-blue-100 rounded border">
+                                      <div className="absolute left-1/2 top-1/2 w-2 h-2 bg-blue-600 rounded-full transform -translate-x-1/2 -translate-y-1/2"></div>
+                                      <div 
+                                        className={`absolute w-3 h-3 rounded-full transform -translate-x-1/2 -translate-y-1/2 ${
+                                          nozzle.active ? 'bg-red-600' : 'bg-gray-400'
+                                        }`}
+                                        style={{
+                                          left: `${50 + (nozzle.x / 100) * 30}%`,
+                                          top: `${50 + (nozzle.y / 100) * 30}%`
+                                        }}
+                                      ></div>
+                                    </div>
+                                    <p className="text-xs text-gray-500 mt-1">Blau: Förderbandmitte | Rot: Düse {nozzleId}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            
+                            {!nozzle.active && (
+                              <p className="text-sm text-gray-500 italic">Düse ist deaktiviert</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                      
+                      <button
+                        onClick={onResetNozzles}
+                        className="w-full px-4 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold transition-all duration-200 hover:shadow-lg flex items-center justify-center gap-2"
+                      >
+                        <span className="text-xl">🔄</span>
+                        <span>Auf Default-Positionen zurücksetzen</span>
+                      </button>
+                      
+                      <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded mt-4">
+                        <h4 className="font-medium text-blue-800 mb-2">📋 Düsen-Status</h4>
+                        <div className="text-sm text-blue-700">
+                          <p>Aktive Düsen: {Object.values(nozzles).filter(n => n.active).length}/4</p>
+                          <p className="text-xs mt-1">
+                            Position: Relativ zur Förderbandmitte<br/>
+                            X: Quer zum Band (-links, +rechts)<br/>
+                            Y: Längs zum Band (-gegen, +mit Richtung)
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
+          );
+        };
+
+        // ====================== HISTOGRAM ======================
+        const Histogram = ({ hitMap, gridSize }) => {
+          const histogramRef = useRef(null);
+          
+          useEffect(() => {
+            const canvas = histogramRef.current;
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            const width = 600;
+            const height = 200;
+            const margin = { top: 20, right: 20, bottom: 40, left: 50 };
+            const chartWidth = width - margin.left - margin.right;
+            const chartHeight = height - margin.top - margin.bottom;
+            
+            const hitCounts = {};
+            let totalRasterPoints = 0;
+            let maxHits = 0;
+            
+            const rasterPointsX = Math.ceil(SIMULATION_CONFIG.WORKPIECE_WIDTH / gridSize);
+            const rasterPointsY = Math.ceil(SIMULATION_CONFIG.WORKPIECE_HEIGHT / gridSize);
+            const totalPossiblePoints = rasterPointsX * rasterPointsY;
+            
+            Object.values(hitMap).forEach(hits => {
+              hitCounts[hits] = (hitCounts[hits] || 0) + 1;
+              maxHits = Math.max(maxHits, hits);
+              totalRasterPoints++;
+            });
+            
+            const unHitPoints = totalPossiblePoints - totalRasterPoints;
+            if (unHitPoints > 0) {
+              hitCounts[0] = (hitCounts[0] || 0) + unHitPoints;
+            }
+            
+            const hitPercentages = {};
+            let maxPercentage = 0;
+            
+            for (let hits = 0; hits <= maxHits; hits++) {
+              const count = hitCounts[hits] || 0;
+              const percentage = (count / totalPossiblePoints) * 100;
+              hitPercentages[hits] = percentage;
+              maxPercentage = Math.max(maxPercentage, percentage);
+            }
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, width, height);
+            
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            
+            ctx.beginPath();
+            ctx.moveTo(margin.left, margin.top);
+            ctx.lineTo(margin.left, height - margin.bottom);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(margin.left, height - margin.bottom);
+            ctx.lineTo(width - margin.right, height - margin.bottom);
+            ctx.stroke();
+            
+            const barWidth = Math.max(chartWidth / (maxHits + 2), 20);
+            
+            for (let hits = 0; hits <= maxHits; hits++) {
+              const percentage = hitPercentages[hits] || 0;
+              const barHeight = (percentage / Math.max(maxPercentage, 1)) * chartHeight;
+              const x = margin.left + hits * barWidth + 5;
+              const y = height - margin.bottom - barHeight;
+              
+              if (hits === 0) {
+                ctx.fillStyle = '#e3f2fd';
+              } else if (hits === maxHits && maxHits > 0) {
+                ctx.fillStyle = '#ff1744';
+              } else {
+                const intensity = hits / Math.max(maxHits, 1);
+                const gray = Math.floor(100 + intensity * 100);
+                ctx.fillStyle = `rgb(${gray}, ${gray + 50}, 255)`;
+              }
+              
+              ctx.fillRect(x, y, barWidth - 2, barHeight);
+              
+              ctx.strokeStyle = '#333';
+              ctx.strokeRect(x, y, barWidth - 2, barHeight);
+              
+              ctx.fillStyle = '#333';
+              ctx.font = '10px Arial';
+              ctx.textAlign = 'center';
+              ctx.fillText(hits.toString(), x + (barWidth - 2) / 2, height - margin.bottom + 15);
+              
+              if (percentage > 0.1 && barHeight > 15) {
+                ctx.fillStyle = hits === maxHits && maxHits > 0 ? 'white' : 'black';
+                ctx.font = '9px Arial';
+                const displayPercent = percentage < 1 ? percentage.toFixed(1) : Math.round(percentage);
+                ctx.fillText(`${displayPercent}%`, x + (barWidth - 2) / 2, y - 5);
+              }
+            }
+            
+            ctx.fillStyle = '#333';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'right';
+            
+            for (let i = 0; i <= 5; i++) {
+              const percentage = (maxPercentage / 5) * i;
+              const y = height - margin.bottom - (chartHeight / 5) * i;
+              const displayPercent = percentage < 1 ? percentage.toFixed(1) : Math.round(percentage);
+              ctx.fillText(`${displayPercent}%`, margin.left - 5, y + 3);
+            }
+            
+            ctx.fillStyle = '#333';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            
+            ctx.fillText('Anzahl Übersprühungen', width / 2, height - 5);
+            
+            ctx.save();
+            ctx.translate(15, height / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('Anteil Werkstück (%)', 0, 0);
+            ctx.restore();
+            
+            ctx.font = '14px Arial';
+            ctx.fillText(`Verteilung der Übersprühungen (${gridSize}×${gridSize}cm Raster)`, width / 2, 15);
+            
+          }, [hitMap, gridSize]);
+          
+          return (
+            <div className="mt-4">
+              <canvas
+                ref={histogramRef}
+                width={600}
+                height={200}
+                className="border border-gray-300 rounded"
+              />
+              <div className="mt-2 text-sm text-gray-600 text-center">
+                <p>Histogramm zeigt die prozentuale Verteilung der Lackschichtdicke über das gesamte Werkstück</p>
+                <p>Ideal: Hoher Prozentsatz bei optimaler Übersprühung | Rot: Überlackierte Bereiche</p>
+              </div>
+            </div>
+          );
+        };
+
+        // ====================== MAIN COMPONENT ======================
+        const SprayCoatingSimulation = () => {
+          const canvasRef = useRef(null);
+          const animationRef = useRef(null);
+          
+          const [params, setParams] = useState({
+            beltSpeed: SIMULATION_CONFIG.DEFAULTS.beltSpeed,
+            pendlerCycles: SIMULATION_CONFIG.DEFAULTS.pendlerCycles,
+            hublaenge: SIMULATION_CONFIG.DEFAULTS.hublaenge,
+            sprayAngle: SIMULATION_CONFIG.DEFAULTS.sprayAngle,
+            distance: SIMULATION_CONFIG.DEFAULTS.distance,
+            gridSize: SIMULATION_CONFIG.DEFAULTS.gridSize,
+            fps: SIMULATION_CONFIG.DEFAULTS.fps,
+            sprayWidth: (() => {
+              return Math.round(SIMULATION_CONFIG.DEFAULTS.distance * 
+                Math.tan((SIMULATION_CONFIG.DEFAULTS.sprayAngle * Math.PI) / 180) * 10) / 10;
+            })(),
+          });
+          
+          const [nozzles, setNozzles] = useState({
+            nozzle1: { active: true, x: 0, y: -25 },
+            nozzle2: { active: true, x: 10, y: 25 },
+            nozzle3: { active: false, x: 50, y: -25 },
+            nozzle4: { active: false, x: 60, y: 25 },
+          });
+          
+          const [isRunning, setIsRunning] = useState(false);
+          
+          const WORKPIECE_START_X = SIMULATION_CONFIG.PENDLER_X - SIMULATION_CONFIG.WORKPIECE_MARGIN - SIMULATION_CONFIG.WORKPIECE_WIDTH;
+          
+          const [workpiecePosition, setWorkpiecePosition] = useState({ 
+            x: WORKPIECE_START_X, 
+            y: (SIMULATION_CONFIG.CANVAS_HEIGHT - SIMULATION_CONFIG.WORKPIECE_HEIGHT) / 2 
+          });
+          const [pendlerPosition, setPendlerPosition] = useState(0);
+          const [pendlerCycleProgress, setPendlerCycleProgress] = useState(0);
+          const [hitMap, setHitMap] = useState({});
+          const [previousHitMap, setPreviousHitMap] = useState({});
+          
+          const { getSprayWidth } = useSprayCalculations(params.sprayAngle, params.distance, params.sprayWidth);
+          
+          const handleParamChange = useCallback((key, value) => {
+            setParams(prev => ({ ...prev, [key]: value }));
+          }, []);
+          
+          const handleNozzleChange = useCallback((nozzleId, property, value) => {
+            setNozzles(prev => ({
+              ...prev,
+              [`nozzle${nozzleId}`]: {
+                ...prev[`nozzle${nozzleId}`],
+                [property]: value
+              }
+            }));
+          }, []);
+          
+          const resetNozzlesToDefault = useCallback(() => {
+            setNozzles({
+              nozzle1: { active: true, x: 0, y: -25 },
+              nozzle2: { active: true, x: 10, y: 25 },
+              nozzle3: { active: false, x: 50, y: -25 },
+              nozzle4: { active: false, x: 60, y: 25 },
+            });
+          }, []);
+          
+          const resetSimulation = useCallback(() => {
+            setWorkpiecePosition({ 
+              x: WORKPIECE_START_X, 
+              y: (SIMULATION_CONFIG.CANVAS_HEIGHT - SIMULATION_CONFIG.WORKPIECE_HEIGHT) / 2 
+            });
+            setPendlerPosition(0);
+            setPendlerCycleProgress(0);
+            setHitMap({});
+            setPreviousHitMap({});
+            setIsRunning(false);
+          }, [WORKPIECE_START_X]);
+
+          const getBeltSpeedPixelsPerFrame = useCallback(() => {
+            return (params.beltSpeed / 60 * 100) / params.fps;
+          }, [params.beltSpeed, params.fps]);
+          
+          const getPendlerCenterPosition = useCallback(() => {
+            return workpiecePosition.y + SIMULATION_CONFIG.WORKPIECE_HEIGHT / 2;
+          }, [workpiecePosition.y]);
+          
+          const getPistolPositions = useCallback(() => {
+            const centerPos = getPendlerCenterPosition();
+            const bandCenterX = SIMULATION_CONFIG.PENDLER_X;
+            const positions = [];
+            
+            Object.entries(nozzles).forEach(([key, nozzle]) => {
+              if (nozzle.active) {
+                positions.push({
+                  x: bandCenterX + nozzle.x,
+                  y: centerPos + pendlerPosition + nozzle.y,
+                  id: key
+                });
+              }
+            });
+            
+            return positions;
+          }, [pendlerPosition, nozzles, getPendlerCenterPosition]);
+
+          const getAllNozzlePositions = useCallback(() => {
+            const centerPos = getPendlerCenterPosition();
+            const bandCenterX = SIMULATION_CONFIG.PENDLER_X;
+            const positions = [];
+            
+            Object.entries(nozzles).forEach(([key, nozzle]) => {
+              positions.push({
+                x: bandCenterX + nozzle.x,
+                y: centerPos + pendlerPosition + nozzle.y,
+                id: key,
+                active: nozzle.active
+              });
+            });
+            
+            return positions;
+          }, [pendlerPosition, nozzles, getPendlerCenterPosition]);
+
+          const updateHitMapOptimized = useCallback((pistolPositions) => {
+            setHitMap(prevHitMap => {
+              const newHitMap = { ...prevHitMap };
+              const currentlyHit = {};
+              
+              pistolPositions.forEach((pistol) => {
+                const sprayWidth = getSprayWidth();
+                const sprayHeight = sprayWidth / 4;
+                
+                const nozzleCurrentlyHit = {};
+                const nozzlePreviousKey = `${pistol.id}_previous`;
+                const nozzlePrevious = previousHitMap[nozzlePreviousKey] || {};
+                
+                const sprayLeft = pistol.x - sprayWidth / 2;
+                const sprayRight = pistol.x + sprayWidth / 2;
+                const sprayTop = pistol.y - sprayHeight / 2;
+                const sprayBottom = pistol.y + sprayHeight / 2;
+                
+                const workLeft = workpiecePosition.x;
+                const workRight = workpiecePosition.x + SIMULATION_CONFIG.WORKPIECE_WIDTH;
+                const workTop = workpiecePosition.y;
+                const workBottom = workpiecePosition.y + SIMULATION_CONFIG.WORKPIECE_HEIGHT;
+                
+                if (sprayRight < workLeft || sprayLeft > workRight || 
+                    sprayBottom < workTop || sprayTop > workBottom) {
+                  currentlyHit[nozzlePreviousKey] = {};
+                  return;
+                }
+                
+                const checkLeft = Math.max(0, Math.floor((sprayLeft - workLeft) / params.gridSize) * params.gridSize);
+                const checkRight = Math.min(SIMULATION_CONFIG.WORKPIECE_WIDTH, Math.ceil((sprayRight - workLeft) / params.gridSize) * params.gridSize);
+                const checkTop = Math.max(0, Math.floor((sprayTop - workTop) / params.gridSize) * params.gridSize);
+                const checkBottom = Math.min(SIMULATION_CONFIG.WORKPIECE_HEIGHT, Math.ceil((sprayBottom - workTop) / params.gridSize) * params.gridSize);
+                
+                for (let x = checkLeft; x < checkRight; x += params.gridSize) {
+                  for (let y = checkTop; y < checkBottom; y += params.gridSize) {
+                    const worldX = workpiecePosition.x + x;
+                    const worldY = workpiecePosition.y + y;
+                    
+                    const dx = (worldX - pistol.x) / (sprayWidth / 2);
+                    const dy = (worldY - pistol.y) / (sprayHeight / 2);
+                    
+                    if (dx * dx + dy * dy <= 1) {
+                      const key = `${Math.floor(x/params.gridSize)}_${Math.floor(y/params.gridSize)}`;
+                      
+                      nozzleCurrentlyHit[key] = true;
+                      
+                      if (!nozzlePrevious[key]) {
+                        newHitMap[key] = (newHitMap[key] || 0) + 1;
+                      }
+                    }
+                  }
+                }
+                
+                currentlyHit[nozzlePreviousKey] = nozzleCurrentlyHit;
+              });
+              
+              setPreviousHitMap(currentlyHit);
+              return newHitMap;
+            });
+          }, [workpiecePosition, getSprayWidth, previousHitMap, params.gridSize]);
+          
+          const updateSimulation = useCallback(() => {
+            if (!isRunning) return;
+            
+            const deltaTime = 1/params.fps;
+            
+            setWorkpiecePosition(prev => ({
+              ...prev,
+              x: prev.x + getBeltSpeedPixelsPerFrame()
+            }));
+            
+            setPendlerCycleProgress(prev => {
+              const newProgress = prev + (params.pendlerCycles / 60) * deltaTime;
+              return newProgress % 1;
+            });
+            
+            setPendlerPosition(prev => {
+              const cyclePos = Math.sin(pendlerCycleProgress * 2 * Math.PI);
+              return (params.hublaenge / 2) * cyclePos;
+            });
+            
+            const pistolPositions = getPistolPositions();
+            updateHitMapOptimized(pistolPositions);
+            
+          }, [isRunning, getBeltSpeedPixelsPerFrame, params.pendlerCycles, params.hublaenge, params.fps, pendlerCycleProgress, getPistolPositions, updateHitMapOptimized]);
+
+          useEffect(() => {
+            if (isRunning) {
+              animationRef.current = setInterval(updateSimulation, 1000/params.fps);
+            } else {
+              clearInterval(animationRef.current);
+            }
+            
+            return () => clearInterval(animationRef.current);
+          }, [isRunning, updateSimulation, params.fps]);
+          
+          useEffect(() => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, SIMULATION_CONFIG.CANVAS_WIDTH, SIMULATION_CONFIG.CANVAS_HEIGHT);
+            
+            ctx.fillStyle = '#666';
+            ctx.fillRect(0, workpiecePosition.y - 10, SIMULATION_CONFIG.CANVAS_WIDTH, SIMULATION_CONFIG.WORKPIECE_HEIGHT + 20);
+            
+            ctx.fillStyle = '#999';
+            for (let i = 0; i < SIMULATION_CONFIG.CANVAS_WIDTH; i += 50) {
+              ctx.beginPath();
+              ctx.moveTo(i, workpiecePosition.y - 5);
+              ctx.lineTo(i + 10, workpiecePosition.y - 5);
+              ctx.lineTo(i + 5, workpiecePosition.y - 10);
+              ctx.closePath();
+              ctx.fill();
+            }
+            
+            let minHits = Infinity;
+            let maxHits = 0;
+            
+            for (let x = 0; x < SIMULATION_CONFIG.WORKPIECE_WIDTH; x += params.gridSize) {
+              for (let y = 0; y < SIMULATION_CONFIG.WORKPIECE_HEIGHT; y += params.gridSize) {
+                const key = `${Math.floor(x/params.gridSize)}_${Math.floor(y/params.gridSize)}`;
+                const hits = hitMap[key] || 0;
+                
+                if (hits < minHits) {
+                  minHits = hits;
+                }
+                if (hits > maxHits) {
+                  maxHits = hits;
+                }
+              }
+            }
+            
+            const dynamicMaxHits = Math.max(maxHits, 1);
+            
+            minHits = Infinity;
+            maxHits = 0;
+            
+            for (let x = 0; x < SIMULATION_CONFIG.WORKPIECE_WIDTH; x += params.gridSize) {
+              for (let y = 0; y < SIMULATION_CONFIG.WORKPIECE_HEIGHT; y += params.gridSize) {
+                const key = `${Math.floor(x/params.gridSize)}_${Math.floor(y/params.gridSize)}`;
+                const hits = hitMap[key] || 0;
+                
+                ctx.fillStyle = getDynamicColorForHits(hits, dynamicMaxHits);
+                ctx.fillRect(
+                  workpiecePosition.x + x,
+                  workpiecePosition.y + y,
+                  params.gridSize,
+                  params.gridSize
+                );
+                
+                if (hits < minHits) {
+                  minHits = hits;
+                } else if (hits > maxHits) {
+                  maxHits = hits;
+                }
+              }
+            }
+            
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(workpiecePosition.x, workpiecePosition.y, SIMULATION_CONFIG.WORKPIECE_WIDTH, SIMULATION_CONFIG.WORKPIECE_HEIGHT);
+            
+            const pendlerCenterY = getPendlerCenterPosition();
+            ctx.fillStyle = '#333';
+            ctx.fillRect(SIMULATION_CONFIG.PENDLER_X - 10, pendlerCenterY + pendlerPosition - 5, 20, 10);
+            
+            const pistolPositions = getPistolPositions();
+            const allNozzlePositions = getAllNozzlePositions();
+            
+            allNozzlePositions.forEach((nozzle, index) => {
+              ctx.fillStyle = nozzle.active ? '#ff6b6b' : '#95a5a6';
+              ctx.fillRect(nozzle.x - 4, nozzle.y - 8, 8, 16);
+              
+              const nozzleNumber = nozzle.id ? nozzle.id.replace('nozzle', '') : index + 1;
+              ctx.fillStyle = 'white';
+              ctx.font = '10px Arial';
+              ctx.textAlign = 'center';
+              ctx.fillText(nozzleNumber.toString(), nozzle.x, nozzle.y + 3);
+            });
+            
+            if (isRunning) {
+              pistolPositions.forEach((pistol) => {
+                const sprayWidth = getSprayWidth();
+                const sprayHeight = sprayWidth / 4;
+                
+                ctx.strokeStyle = 'rgba(255, 107, 107, 0.3)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.ellipse(pistol.x, pistol.y, sprayWidth/2, sprayHeight/2, 0, 0, 2 * Math.PI);
+                ctx.stroke();
+                
+                ctx.fillStyle = 'rgba(255, 107, 107, 0.1)';
+                ctx.fill();
+              });
+            }
+            
+            const legendX = SIMULATION_CONFIG.CANVAS_WIDTH - 100;
+            const legendY = 50;
+            const legendWidth = 20;
+            const legendHeight = 200;
+            
+            ctx.fillStyle = '#000';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Übersprühungen', legendX + legendWidth/2, legendY - 10);
+            
+            for (let i = 0; i <= dynamicMaxHits; i += Math.max(dynamicMaxHits / 120, 0.1)) {
+              const y = legendY + (i / dynamicMaxHits) * legendHeight;
+              ctx.fillStyle = getDynamicColorForHits(dynamicMaxHits - i, dynamicMaxHits);
+              ctx.fillRect(legendX, y, legendWidth, 2);
+            }
+            
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(legendX, legendY, legendWidth, legendHeight);
+            
+            ctx.fillStyle = '#000';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            
+            const labelCount = 5;
+            const step = dynamicMaxHits / (labelCount - 1);
+            const legendLabels = [];
+            for (let i = 0; i < labelCount; i++) {
+              legendLabels.push(Math.round((labelCount - 1 - i) * step));
+            }
+            
+            legendLabels.forEach((value, index) => {
+              const y = legendY + (index / (labelCount - 1)) * legendHeight;
+              ctx.fillText(value.toString(), legendX + legendWidth + 5, y + 4);
+            });
+            
+            ctx.fillStyle = '#000';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Min: ${minHits === Infinity ? 0 : minHits}`, legendX - 60, legendY + legendHeight + 20);
+            ctx.fillText(`Max: ${maxHits}`, legendX - 60, legendY + legendHeight + 35);
+            
+            ctx.fillStyle = '#000';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Werkstück: 305×125cm (3050×1250mm)`, 10, 20);
+            ctx.fillText(`Band: ${Math.round(workpiecePosition.x - WORKPIECE_START_X)} cm`, 10, 35);
+            ctx.fillText(`Pendler: ${Math.round(pendlerPosition)} cm (Mittelposition)`, 10, 50);
+            ctx.fillText(`Abstand Werkstück→Pendler: ${Math.round(SIMULATION_CONFIG.PENDLER_X - (workpiecePosition.x + SIMULATION_CONFIG.WORKPIECE_WIDTH))} cm`, 10, 65);
+            
+          }, [workpiecePosition, pendlerPosition, nozzles, params.gridSize, hitMap, isRunning, getSprayWidth, getPistolPositions, getAllNozzlePositions, getPendlerCenterPosition, WORKPIECE_START_X]);
+          
+          return React.createElement('div', { className: "p-6 bg-gradient-to-br from-gray-100 to-gray-200 min-h-screen" },
+            React.createElement('div', { className: "max-w-full mx-auto" },
+              React.createElement('h1', { className: "text-4xl font-bold mb-8 text-center text-gray-800" },
+                "🎨 Sprühbeschichtungsanlagen Simulation"
+              ),
+              
+              React.createElement(CollapsibleControlPanel, {
+                params: params,
+                onParamChange: handleParamChange,
+                isRunning: isRunning,
+                onToggleRunning: () => setIsRunning(!isRunning),
+                onReset: resetSimulation
+              }),
+              
+              React.createElement(CollapsibleNozzleControl, {
+                nozzles: nozzles,
+                onNozzleChange: handleNozzleChange,
+                onResetNozzles: resetNozzlesToDefault
+              }),
+              
+              React.createElement('div', { className: "bg-white rounded-lg shadow-lg mx-auto max-w-6xl" },
+                React.createElement('div', { className: "p-6" },
+                  React.createElement('div', { className: "flex justify-between items-center mb-4" },
+                    React.createElement('h3', { className: "text-xl font-semibold text-gray-800 flex items-center gap-2" },
+                      "🖥️ Live-Simulation"
+                    ),
+                    
+                    React.createElement('div', { className: "flex gap-3" },
+                      React.createElement('button', {
+                        onClick: () => setIsRunning(!isRunning),
+                        className: `px-6 py-3 rounded-lg font-semibold text-lg transition-all duration-200 flex items-center gap-2 ${
+                          isRunning 
+                            ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg hover:shadow-xl' 
+                            : 'bg-green-500 hover:bg-green-600 text-white shadow-lg hover:shadow-xl'
+                        }`
+                      },
+                        React.createElement('span', { className: "text-xl" }, isRunning ? '⏹️' : '▶️'),
+                        React.createElement('span', null, isRunning ? 'Stop' : 'Start')
+                      ),
+                      
+                      React.createElement('button', {
+                        onClick: resetSimulation,
+                        className: "px-4 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded-lg font-semibold transition-all duration-200 hover:shadow-lg flex items-center gap-2"
+                      },
+                        React.createElement('span', { className: "text-xl" }, '🔄'),
+                        React.createElement('span', null, 'Reset')
+                      )
+                    )
+                  ),
+                  
+                  React.createElement('div', { className: "flex justify-center" },
+                    React.createElement('canvas', {
+                      ref: canvasRef,
+                      width: SIMULATION_CONFIG.CANVAS_WIDTH,
+                      height: SIMULATION_CONFIG.CANVAS_HEIGHT,
+                      className: "border border-gray-300 rounded-lg"
+                    })
+                  ),
+                  
+                  React.createElement('div', { className: "mt-6" },
+                    React.createElement('h3', { className: "text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2" },
+                      "📊 Qualitätsanalyse"
+                    ),
+                    React.createElement('div', { className: "flex justify-center" },
+                      React.createElement(Histogram, { 
+                        hitMap: hitMap, 
+                        gridSize: params.gridSize
+                      })
+                    )
+                  )
+                )
+              ),
+              
+              React.createElement('div', { className: "mt-4 text-center" },
+                React.createElement('p', { className: "text-gray-600 text-sm" },
+                  "💡 Tipp: Verwende die Buttons oben links und rechts für Anlagen- und Düsensteuerung"
+                )
+              )
+            )
+          );
+        };
+
+        // Hide loading and show app
+        document.getElementById('loading').style.display = 'none';
+        ReactDOM.render(React.createElement(SprayCoatingSimulation), document.getElementById('root'));
+    </script>
+</body>
+</html>
