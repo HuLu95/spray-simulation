@@ -657,8 +657,7 @@
           });
           
           const [isRunning, setIsRunning] = useState(false);
-          const [simulationTime, setSimulationTime] = useState(0); // Timer in Sekunden
-          const [startTime, setStartTime] = useState(null);
+          const [simulationTime, setSimulationTime] = useState(0); // Timer in Simulationszeit (gekoppelt)
           
           const WORKPIECE_START_X = SIMULATION_CONFIG.PENDLER_X - SIMULATION_CONFIG.WORKPIECE_MARGIN - SIMULATION_CONFIG.WORKPIECE_WIDTH;
           
@@ -706,8 +705,7 @@
             setHitMap({});
             setPreviousHitMap({});
             setIsRunning(false);
-            setSimulationTime(0); // Timer zurücksetzen
-            setStartTime(null);
+            setSimulationTime(0); // Timer zurücksetzen (simulationsbasiert)
           }, [WORKPIECE_START_X]);
 
           const getBeltSpeedPixelsPerFrame = useCallback(() => {
@@ -823,6 +821,9 @@
             
             const deltaTime = 1/params.collisionFPS;
             
+            // TIMER UPDATE: An Simulation gekoppelt (Lösung A)
+            setSimulationTime(prev => prev + deltaTime);
+            
             setWorkpiecePosition(prev => ({
               ...prev,
               x: prev.x + getBeltSpeedPixelsPerFrame()
@@ -848,10 +849,6 @@
           useEffect(() => {
             if (isRunning) {
               simulationRef.current = setInterval(updateSimulation, 1000/params.collisionFPS);
-              // Timer starten
-              if (!startTime) {
-                setStartTime(Date.now());
-              }
             } else {
               clearInterval(simulationRef.current);
             }
@@ -859,21 +856,7 @@
             return () => {
               clearInterval(simulationRef.current);
             };
-          }, [isRunning, updateSimulation, params.collisionFPS, startTime]);
-          
-          // Timer-Update useEffect
-          useEffect(() => {
-            let timerInterval;
-            if (isRunning && startTime) {
-              timerInterval = setInterval(() => {
-                setSimulationTime((Date.now() - startTime) / 1000); // Sekunden
-              }, 100); // Update alle 100ms für flüssige Anzeige
-            }
-            
-            return () => {
-              if (timerInterval) clearInterval(timerInterval);
-            };
-          }, [isRunning, startTime]);
+          }, [isRunning, updateSimulation, params.collisionFPS]);
           
           useEffect(() => {
             const canvas = canvasRef.current;
@@ -1027,13 +1010,14 @@
             ctx.fillText(`Band: ${Math.round(workpiecePosition.x - WORKPIECE_START_X)} cm`, 10, 35);
             ctx.fillText(`Pendler: ${Math.round(pendlerPosition)} cm (Mittelposition)`, 10, 50);
             ctx.fillText(`Abstand Werkstück→Pendler: ${Math.round(SIMULATION_CONFIG.PENDLER_X - (workpiecePosition.x + SIMULATION_CONFIG.WORKPIECE_WIDTH))} cm`, 10, 65);
-            ctx.fillText(`⏱️ Zeit: ${simulationTime.toFixed(1)}s`, 10, 80);
+            ctx.fillText(`⏱️ Simulationszeit: ${simulationTime.toFixed(1)}s`, 10, 80);
             
-            // Physik-Kalibrierung (rechts unten)
-            ctx.fillText(`🏭 Realistische Geschwindigkeiten:`, 450, SIMULATION_CONFIG.CANVAS_HEIGHT - 60);
-            ctx.fillText(`Band: ${params.beltSpeed} m/min = ${(params.beltSpeed * 100 / 60).toFixed(1)} cm/s`, 450, SIMULATION_CONFIG.CANVAS_HEIGHT - 45);
-            ctx.fillText(`Pendler: ${params.pendlerCycles} Zykl/min = ${(60/params.pendlerCycles).toFixed(1)}s/Zyklus`, 450, SIMULATION_CONFIG.CANVAS_HEIGHT - 30);
-            ctx.fillText(`Kollisions-FPS: ${params.collisionFPS} (Genauigkeit)`, 450, SIMULATION_CONFIG.CANVAS_HEIGHT - 15);
+            // Physik-Kalibrierung (rechts unten) - Simulationsbasiert
+            ctx.fillText(`🏭 Simulationsgeschwindigkeiten (gekoppelt):`, 400, SIMULATION_CONFIG.CANVAS_HEIGHT - 75);
+            ctx.fillText(`Band: ${params.beltSpeed} m/min = ${(params.beltSpeed * 100 / 60).toFixed(1)} cm/s`, 400, SIMULATION_CONFIG.CANVAS_HEIGHT - 60);
+            ctx.fillText(`Pendler: ${params.pendlerCycles} Zykl/min = ${(60/params.pendlerCycles).toFixed(1)}s/Zyklus`, 400, SIMULATION_CONFIG.CANVAS_HEIGHT - 45);
+            ctx.fillText(`Kollisions-FPS: ${params.collisionFPS} (Zeitbasis)`, 400, SIMULATION_CONFIG.CANVAS_HEIGHT - 30);
+            ctx.fillText(`Timer gekoppelt an Simulation (Lösung A)`, 400, SIMULATION_CONFIG.CANVAS_HEIGHT - 15);
             
           }, [workpiecePosition, pendlerPosition, nozzles, params.gridSize, params.beltSpeed, params.pendlerCycles, params.collisionFPS, hitMap, isRunning, simulationTime, getSprayWidth, getPistolPositions, getAllNozzlePositions, getPendlerCenterPosition, WORKPIECE_START_X]);
           
@@ -1047,18 +1031,7 @@
                 params: params,
                 onParamChange: handleParamChange,
                 isRunning: isRunning,
-                onToggleRunning: () => {
-                  if (!isRunning) {
-                    // Simulation starten - Timer neu starten wenn nicht schon gestartet
-                    if (simulationTime === 0) {
-                      setStartTime(Date.now());
-                    } else {
-                      // Simulation wurde pausiert - Zeit-Offset berücksichtigen
-                      setStartTime(Date.now() - simulationTime * 1000);
-                    }
-                  }
-                  setIsRunning(!isRunning);
-                },
+                onToggleRunning: () => setIsRunning(!isRunning), // Vereinfacht - keine Timer-Logik nötig
                 onReset: resetSimulation
               }),
               
@@ -1077,18 +1050,7 @@
                     
                     React.createElement('div', { className: "flex gap-3" },
                       React.createElement('button', {
-                        onClick: () => {
-                          if (!isRunning) {
-                            // Simulation starten - Timer-Logic
-                            if (simulationTime === 0) {
-                              setStartTime(Date.now());
-                            } else {
-                              // Simulation wurde pausiert - Zeit-Offset berücksichtigen
-                              setStartTime(Date.now() - simulationTime * 1000);
-                            }
-                          }
-                          setIsRunning(!isRunning);
-                        },
+                        onClick: () => setIsRunning(!isRunning), // Vereinfacht - Timer automatisch gekoppelt
                         className: `px-6 py-3 rounded-lg font-semibold text-lg transition-all duration-200 flex items-center gap-2 ${
                           isRunning 
                             ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg hover:shadow-xl' 
