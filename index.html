@@ -49,6 +49,7 @@
             distance: 54,
             gridSize: 2,
             fps: 120,
+            collisionFPS: 60, // Kollisionschecks pro Sekunde (einstellbar)
           }
         };
 
@@ -323,13 +324,14 @@
                       </div>
                       
                       <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded">
-                        <h4 className="font-medium text-blue-800 mb-2">📊 Live-Analyse</h4>
+                        <h4 className="font-medium text-blue-800 mb-2">📊 Einstellbare Hit-Analyse</h4>
                         <div className="text-sm text-blue-700 space-y-1">
+                          <p>• Hit-basierte Kollisionserkennung (diskret)</p>
+                          <p>• Kollisionschecks: {params.collisionFPS}/Sek (einstellbar)</p>
+                          <p>• Darstellung: {params.fps} FPS (nur visuell)</p>
                           <p>• Farbskala: Blau(0) → Orange → Rot(Max)</p>
                           <p>• Raster: {params.gridSize}×{params.gridSize}cm</p>
-                          <p>• FPS: {params.fps} (Simulation)</p>
-                          <p>• Nur Maximum wird rot markiert</p>
-                          <p>• Histogramm zeigt Prozentverteilung</p>
+                          <p>• Höhere Kollisions-FPS = genauere Ergebnisse</p>
                         </div>
                       </div>
                     </div>
@@ -496,6 +498,7 @@
             const rasterPointsY = Math.ceil(SIMULATION_CONFIG.WORKPIECE_HEIGHT / gridSize);
             const totalPossiblePoints = rasterPointsX * rasterPointsY;
             
+            // Histogramm für hit-basierte Werte (FPS-unabhängig aber diskrete Hits)
             Object.values(hitMap).forEach(hits => {
               hitCounts[hits] = (hitCounts[hits] || 0) + 1;
               maxHits = Math.max(maxHits, hits);
@@ -533,6 +536,7 @@
             ctx.lineTo(width - margin.right, height - margin.bottom);
             ctx.stroke();
             
+            // Zeichne Balken für hit-basierte Werte
             const barWidth = Math.max(chartWidth / (maxHits + 2), 20);
             
             for (let hits = 0; hits <= maxHits; hits++) {
@@ -541,26 +545,31 @@
               const x = margin.left + hits * barWidth + 5;
               const y = height - margin.bottom - barHeight;
               
+              // Balkenfarbe basierend auf Hit-Anzahl
               if (hits === 0) {
-                ctx.fillStyle = '#e3f2fd';
+                ctx.fillStyle = '#e3f2fd'; // Hellblau für 0
               } else if (hits === maxHits && maxHits > 0) {
-                ctx.fillStyle = '#ff1744';
+                ctx.fillStyle = '#ff1744'; // Rot für Maximum
               } else {
                 const intensity = hits / Math.max(maxHits, 1);
                 const gray = Math.floor(100 + intensity * 100);
                 ctx.fillStyle = `rgb(${gray}, ${gray + 50}, 255)`;
               }
               
+              // Zeichne Balken
               ctx.fillRect(x, y, barWidth - 2, barHeight);
               
+              // Zeichne Umriss
               ctx.strokeStyle = '#333';
               ctx.strokeRect(x, y, barWidth - 2, barHeight);
               
+              // X-Achsen Labels (Anzahl Hits)
               ctx.fillStyle = '#333';
               ctx.font = '10px Arial';
               ctx.textAlign = 'center';
               ctx.fillText(hits.toString(), x + (barWidth - 2) / 2, height - margin.bottom + 15);
               
+              // Prozente über Balken (wenn Platz vorhanden)
               if (percentage > 0.1 && barHeight > 15) {
                 ctx.fillStyle = hits === maxHits && maxHits > 0 ? 'white' : 'black';
                 ctx.font = '9px Arial';
@@ -584,16 +593,19 @@
             ctx.font = '12px Arial';
             ctx.textAlign = 'center';
             
-            ctx.fillText('Anzahl Übersprühungen', width / 2, height - 5);
+            // X-Achse Titel
+            ctx.fillText('Anzahl Übersprühungen (FPS-unabhängig)', width / 2, height - 5);
             
+            // Y-Achse Titel (gedreht)
             ctx.save();
             ctx.translate(15, height / 2);
             ctx.rotate(-Math.PI / 2);
             ctx.fillText('Anteil Werkstück (%)', 0, 0);
             ctx.restore();
             
+            // Titel
             ctx.font = '14px Arial';
-            ctx.fillText(`Verteilung der Übersprühungen (${gridSize}×${gridSize}cm Raster)`, width / 2, 15);
+            ctx.fillText(`Hit-basierte Verteilung (${gridSize}×${gridSize}cm, ${collisionFPS} CPS)`, width / 2, 15);
             
           }, [hitMap, gridSize]);
           
@@ -616,7 +628,7 @@
         // ====================== MAIN COMPONENT ======================
         const SprayCoatingSimulation = () => {
           const canvasRef = useRef(null);
-          const animationRef = useRef(null);
+          const simulationRef = useRef(null); // Für feste 60 FPS Simulation
           
           const [params, setParams] = useState({
             beltSpeed: SIMULATION_CONFIG.DEFAULTS.beltSpeed,
@@ -626,6 +638,7 @@
             distance: SIMULATION_CONFIG.DEFAULTS.distance,
             gridSize: SIMULATION_CONFIG.DEFAULTS.gridSize,
             fps: SIMULATION_CONFIG.DEFAULTS.fps,
+            collisionFPS: SIMULATION_CONFIG.DEFAULTS.collisionFPS, // Kollisionschecks pro Sekunde
             sprayWidth: (() => {
               return Math.round(SIMULATION_CONFIG.DEFAULTS.distance * 
                 Math.tan((SIMULATION_CONFIG.DEFAULTS.sprayAngle * Math.PI) / 180) * 10) / 10;
@@ -690,12 +703,11 @@
           }, [WORKPIECE_START_X]);
 
           const getBeltSpeedPixelsPerFrame = useCallback(() => {
-            // Realistischere Geschwindigkeitsberechnung für Browser
-            // m/min → cm/s → pixels/frame (mit Korrekturfaktor)
+            // FPS-unabhängige Geschwindigkeitsberechnung basierend auf einstellbarer Kollisions-FPS
             const cmPerSecond = (params.beltSpeed * 100) / 60; // m/min → cm/s
             const pixelsPerSecond = cmPerSecond * 0.8; // Skalierungsfaktor für realistische Darstellung
-            return pixelsPerSecond / params.fps;
-          }, [params.beltSpeed, params.fps]);
+            return pixelsPerSecond / params.collisionFPS; // Basiert auf einstellbarer Kollisions-FPS
+          }, [params.beltSpeed, params.collisionFPS]);
           
           const getPendlerCenterPosition = useCallback(() => {
             return workpiecePosition.y + SIMULATION_CONFIG.WORKPIECE_HEIGHT / 2;
@@ -736,6 +748,7 @@
             return positions;
           }, [pendlerPosition, nozzles, getPendlerCenterPosition]);
 
+          // Hit-basierte Kollisionserkennung - FPS-unabhängig aber ohne Zeitberechnung
           const updateHitMapOptimized = useCallback((pistolPositions) => {
             setHitMap(prevHitMap => {
               const newHitMap = { ...prevHitMap };
@@ -775,6 +788,7 @@
                     const worldX = workpiecePosition.x + x;
                     const worldY = workpiecePosition.y + y;
                     
+                    // Einfache Ellipsen-Kollision (ohne Abstandsberechnung)
                     const dx = (worldX - pistol.x) / (sprayWidth / 2);
                     const dy = (worldY - pistol.y) / (sprayHeight / 2);
                     
@@ -783,6 +797,7 @@
                       
                       nozzleCurrentlyHit[key] = true;
                       
+                      // Einfacher Hit-Counter: +1 pro Kollisions-Frame wenn diese Düse den Punkt NICHT im vorherigen Frame getroffen hat
                       if (!nozzlePrevious[key]) {
                         newHitMap[key] = (newHitMap[key] || 0) + 1;
                       }
@@ -798,22 +813,23 @@
             });
           }, [workpiecePosition, getSprayWidth, previousHitMap, params.gridSize]);
           
+          // Einfache Lösung: Getrennte Timer für Simulation und Darstellung
+          const simulationRef = useRef(null);
+          
           const updateSimulation = useCallback(() => {
             if (!isRunning) return;
             
-            // Realistischere Delta-Zeit Berechnung
-            const deltaTime = 1/60; // Basis-FPS für konsistente Bewegung
-            const speedMultiplier = params.fps / 60; // Geschwindigkeits-Korrekturfaktor
+            // Bewegungslogik basierend auf einstellbarer Kollisions-FPS
+            const deltaTime = 1/params.collisionFPS;
             
             setWorkpiecePosition(prev => ({
               ...prev,
-              x: prev.x + getBeltSpeedPixelsPerFrame() * speedMultiplier
+              x: prev.x + getBeltSpeedPixelsPerFrame()
             }));
             
             setPendlerCycleProgress(prev => {
-              // Pendlergeschwindigkeit: Zyklen/min → realistisch skaliert
               const cyclesPerSecond = params.pendlerCycles / 60;
-              const progressIncrement = cyclesPerSecond * deltaTime * 2; // Faktor 2 für sichtbare Bewegung
+              const progressIncrement = cyclesPerSecond * deltaTime;
               const newProgress = prev + progressIncrement;
               return newProgress % 1;
             });
@@ -823,22 +839,25 @@
               return (params.hublaenge / 2) * cyclePos;
             });
             
+            // Kollisionserkennung (Hit-basiert, FPS-unabhängig)
             const pistolPositions = getPistolPositions();
             updateHitMapOptimized(pistolPositions);
             
-          }, [isRunning, getBeltSpeedPixelsPerFrame, params.pendlerCycles, params.hublaenge, params.fps, pendlerCycleProgress, getPistolPositions, updateHitMapOptimized]);
+          }, [isRunning, getBeltSpeedPixelsPerFrame, params.pendlerCycles, params.hublaenge, params.collisionFPS, pendlerCycleProgress, getPistolPositions, updateHitMapOptimized]);
 
+          // Simulation läuft mit einstellbarer Kollisions-FPS
           useEffect(() => {
             if (isRunning) {
-              // Optimierte Frame-Rate für Browser (max 60 FPS für Stabilität)
-              const targetFPS = Math.min(params.fps, 60);
-              animationRef.current = setInterval(updateSimulation, 1000/targetFPS);
+              // Simulation: Einstellbare Kollisions-FPS für anpassbare Genauigkeit
+              simulationRef.current = setInterval(updateSimulation, 1000/params.collisionFPS);
             } else {
-              clearInterval(animationRef.current);
+              clearInterval(simulationRef.current);
             }
             
-            return () => clearInterval(animationRef.current);
-          }, [isRunning, updateSimulation, params.fps]);
+            return () => {
+              clearInterval(simulationRef.current);
+            };
+          }, [isRunning, updateSimulation, params.collisionFPS]);
           
           useEffect(() => {
             const canvas = canvasRef.current;
@@ -862,9 +881,11 @@
               ctx.fill();
             }
             
+            // Performance: Optimiertes Single-Pass Rendering mit hit-basierter Farbskala
             let minHits = Infinity;
             let maxHits = 0;
             
+            // Erster Pass: Finde Min/Max für dynamische Farbskala (Hit-Anzahl)
             for (let x = 0; x < SIMULATION_CONFIG.WORKPIECE_WIDTH; x += params.gridSize) {
               for (let y = 0; y < SIMULATION_CONFIG.WORKPIECE_HEIGHT; y += params.gridSize) {
                 const key = `${Math.floor(x/params.gridSize)}_${Math.floor(y/params.gridSize)}`;
@@ -879,8 +900,10 @@
               }
             }
             
+            // Sicherstellung: Mindestens 1 als Maximum für Farbberechnung
             const dynamicMaxHits = Math.max(maxHits, 1);
             
+            // Zweiter Pass: Rendern mit hit-basierter Farbskala
             minHits = Infinity;
             maxHits = 0;
             
@@ -889,6 +912,7 @@
                 const key = `${Math.floor(x/params.gridSize)}_${Math.floor(y/params.gridSize)}`;
                 const hits = hitMap[key] || 0;
                 
+                // Render Rasterpunkt mit hit-basierter Farbskala
                 ctx.fillStyle = getDynamicColorForHits(hits, dynamicMaxHits);
                 ctx.fillRect(
                   workpiecePosition.x + x,
@@ -897,6 +921,7 @@
                   params.gridSize
                 );
                 
+                // Min/Max Hit tracking
                 if (hits < minHits) {
                   minHits = hits;
                 } else if (hits > maxHits) {
@@ -943,35 +968,41 @@
               });
             }
             
+            // Zeichne Legende (Farbbalken) mit hit-basierter Skala
             const legendX = SIMULATION_CONFIG.CANVAS_WIDTH - 100;
             const legendY = 50;
             const legendWidth = 20;
             const legendHeight = 200;
             
+            // Legende Titel
             ctx.fillStyle = '#000';
             ctx.font = '12px Arial';
             ctx.textAlign = 'center';
             ctx.fillText('Übersprühungen', legendX + legendWidth/2, legendY - 10);
             
+            // Farbbalken zeichnen (hit-basiert)
             for (let i = 0; i <= dynamicMaxHits; i += Math.max(dynamicMaxHits / 120, 0.1)) {
               const y = legendY + (i / dynamicMaxHits) * legendHeight;
               ctx.fillStyle = getDynamicColorForHits(dynamicMaxHits - i, dynamicMaxHits);
               ctx.fillRect(legendX, y, legendWidth, 2);
             }
             
+            // Rahmen um Legende
             ctx.strokeStyle = '#000';
             ctx.lineWidth = 1;
             ctx.strokeRect(legendX, legendY, legendWidth, legendHeight);
             
+            // Beschriftung der Legende (hit-basiert)
             ctx.fillStyle = '#000';
             ctx.font = '10px Arial';
             ctx.textAlign = 'left';
             
+            // Berechne sinnvolle Label-Werte basierend auf Maximum
             const labelCount = 5;
-            const step = dynamicMaxHits / (labelCount - 1);
+            const hitStep = dynamicMaxHits / (labelCount - 1);
             const legendLabels = [];
             for (let i = 0; i < labelCount; i++) {
-              legendLabels.push(Math.round((labelCount - 1 - i) * step));
+              legendLabels.push(Math.round((labelCount - 1 - i) * hitStep));
             }
             
             legendLabels.forEach((value, index) => {
@@ -979,6 +1010,7 @@
               ctx.fillText(value.toString(), legendX + legendWidth + 5, y + 4);
             });
             
+            // Min/Max Anzeige (hit-basiert)
             ctx.fillStyle = '#000';
             ctx.font = '12px Arial';
             ctx.textAlign = 'left';
@@ -1061,7 +1093,8 @@
                     React.createElement('div', { className: "flex justify-center" },
                       React.createElement(Histogram, { 
                         hitMap: hitMap, 
-                        gridSize: params.gridSize
+                        gridSize: params.gridSize,
+                        collisionFPS: params.collisionFPS
                       })
                     )
                   )
